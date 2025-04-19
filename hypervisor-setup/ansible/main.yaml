@@ -1,0 +1,108 @@
+#!/usr/bin/env ansible-playbook
+- name: Setup hypervisor
+  hosts: hypervisors
+
+  tasks:
+    - debug:
+        msg: '{{ root_disks }}'
+
+    - name: Update apt package list
+      apt:
+        update_cache: True
+
+    - name: Install Hypervisor packages
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - qemu-kvm
+        - libvirt-daemon-system
+        - libvirt-clients
+        - bridge-utils
+        - genisoimage
+  
+    - name: Disable and stop apparmor service
+      systemd:
+        name: apparmor
+        state: stopped
+        enabled: no
+
+    - name: Update OS physical volume
+      lvg:
+        vg: ubuntu-vg
+        pvs: "{{ root_disks | join(',') }}"
+        pvresize: True
+      when: root_disks | length > 0
+
+    - name: Update OS logical vol
+      lvol:
+        vg: ubuntu-vg
+        lv: ubuntu-lv
+        size: 95%PVS
+        resizefs: True
+
+    - name: Create /data directory for VM storage
+      ansible.builtin.file:
+        path: /data
+        state: directory
+        mode: 0755
+        owner: libvirt-qemu
+        group: kvm
+
+    - name: Add libvirt, libvirt-qemu, and libvirt-dnsmasq groups to ansible user
+      user:
+        name: "{{ ansible_user }}"
+        groups: libvirt,libvirt-qemu,libvirt-dnsmasq
+        append: yes
+      when: ansible_user | length > 0
+
+    - name: Grant passwordless sudo to ansible user
+      copy:
+        dest: "/etc/sudoers.d/{{ ansible_user }}"
+        content: "{{ ansible_user }} ALL=(ALL) NOPASSWD:ALL"
+        mode: 0440
+        owner: root
+        group: root
+      when: ansible_user | length > 0
+ 
+    - name: Update /etc/default/grub for GPU pass through
+      lineinfile:
+        path: /etc/default/grub
+        regexp: '^GRUB_CMDLINE_LINUX='
+        line: "GRUB_CMDLINE_LINUX=\"amd_iommu=on amd_iommu=pt mitigations=off apparmor=0 video=efifb:off pcie_acs_override=downstream,multifunction vfio-pci.ids={{ gpu_pci_ids | join(',') }} vfio-pci.disable_vga=1\""
+      notify:
+        - update grub
+        - reboot system
+      when: gpu_pci_ids | length > 0
+
+    - name: Blacklist GPU modules
+      copy:
+        dest: /etc/modprobe.d/no-gpu.conf
+        content: |-
+          # Blacklist Nvidia GPU modules
+          blacklist nvidia
+          blacklist nvidia_drm
+          blacklist nvidia_uvm
+          blacklist nvidia_modeset
+          blacklist nvidiafb
+          blacklist nouveau
+          # Blacklist Intel Arc / Xe GPU modules
+          blacklist xe
+          blacklist i915
+      notify:
+        - update initramfs
+        - reboot system
+      when: has_gpu == True
+
+  handlers:
+    - name: update grub
+      command: update-grub
+
+    - name: update initramfs
+      command: update-initramfs -u
+
+    - name: reboot system
+      command: reboot
+      async: 1
+      poll: 0
+      ignore_errors: True
