@@ -94,7 +94,46 @@
         - reboot system
       when: has_gpu == True
 
+    - name: Send over netplan for br0 setup
+      copy:
+        src: 50-cloud-init.yaml
+        dest: /etc/netplan/50-cloud-init.yaml
+        mode: 0600
+        owner: root
+        group: root
+
+    - name: Enable MulticastDNS in resolved.conf
+      lineinfile:
+        path: /etc/systemd/resolved.conf
+        regexp: '^#?MulticastDNS=.*'
+        line: 'MulticastDNS=yes'
+        backrefs: yes
+      notify: restart systemd-resolved
+
+    - name: Enable MulticastDNS on the br0 interface
+      copy:
+        dest: /etc/systemd/network/10-netplan-br0.network.d/override.conf
+        content: |-
+          [Match]
+          Name=br0
+
+          [Network]
+          MulticastDNS=yes
+      notify: restart systemd-networkd
+
   handlers:
+    - name: restart systemd-resolved
+      systemd:
+        name: systemd-resolved
+        state: restarted
+        enabled: yes
+
+    - name: restart systemd-networkd
+      systemd:
+        name: systemd-networkd
+        state: restarted
+        enabled: yes
+
     - name: update grub
       command: update-grub
 
