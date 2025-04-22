@@ -1,0 +1,66 @@
+#cloud-config
+hostname: ${hostname}
+fqdn: ${hostname}.local
+manage_etc_hosts: true
+
+users:
+  - name: ${automation_user}
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: sudo
+    lock_passwd: true
+    ssh-authorized-keys:
+      - "${automation_user_pubkey}"
+
+ssh_pwauth: false
+
+chpasswd:
+  expire: false
+  users:
+    - name: ${console_user}
+      password: ${console_password}
+      type: text
+
+package_update: true
+pakage_upgrade: true
+packages:
+  - git
+  - curl
+  - qemu-guest-agent
+%{ if has_gpu_passthru ~}
+  - nvidia-driver-565-server 
+%{~ endif ~}
+
+# power_state:
+#  mode: reboot
+#  message: System restart required
+#  timeout: 300
+#  condition: true
+
+runcmd:
+  - sed -i 's/^GRUB_CMDLINE_LINUX=.*/GRUB_CMDLINE_LINUX="mitigations=off"/g' /etc/default/grub
+  - update-grub
+  - echo 'MulticastDNS=yes' >> /etc/systemd/resolved.conf
+  - systemctl daemon-reload
+  - systemctl restart systemd-networkd
+  - systemctl restart systemd-resolved
+  - bash /tmp/launch_script.sh
+
+write_files:
+  - path: /etc/systemd/network/10-netplan-en_interfaces.network.d/override.conf
+    owner: root:root
+    permissions: 0o644
+    content: |-
+      [Match]
+      Name=en*
+
+      [Network]
+      MulticastDNS=yes
+
+%{ if length(launch_script) > 0 ~}
+  - path: /tmp/launch_script.sh
+    owner: root:root
+    permissions: 0o744
+    content: |-
+      ${indent(6, launch_script)}
+
+%{~ endif ~}
