@@ -101,6 +101,7 @@
         mode: 0600
         owner: root
         group: root
+      notify: reboot system
 
     - name: Enable MulticastDNS in resolved.conf
       lineinfile:
@@ -109,6 +110,14 @@
         line: 'MulticastDNS=yes'
         backrefs: yes
       notify: restart systemd-resolved
+
+    - name: Create network.d folder
+      file:
+        # the 10-netplan-br0.network.d folder name to create was determined by examining the /run/systemd/network folder
+        path: /etc/systemd/network/10-netplan-br0.network.d
+        state: directory
+        owner: root
+        group: root
 
     - name: Enable MulticastDNS on the br0 interface
       copy:
